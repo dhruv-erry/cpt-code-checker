@@ -231,6 +231,55 @@ function formatAvgAllowable(value: number | null, avgPending: boolean): string {
   return value == null ? "Avg allowable: N/A" : `Avg allowable: ${avgAllowableFormatter.format(value)}`;
 }
 
+function resolvedAvgAllowableForResult(result: CptSearchResult): number | null {
+  const v =
+    result.avgAllowable ??
+    result.srt?.cptCodes.find(
+      (entry) => entry.code.toUpperCase() === result.code.toUpperCase(),
+    )?.avgAllowable ??
+    null;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function CptCopyGlyph() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      width={18}
+      height={18}
+      aria-hidden
+    >
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  );
+}
+
+function CptCheckGlyph() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      width={18}
+      height={18}
+      aria-hidden
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
 function emptySrtMap(codes: string[]): Record<string, CptSrtSlice | null> {
   const out: Record<string, CptSrtSlice | null> = {};
   for (const c of codes) {
@@ -311,20 +360,24 @@ export default function CptHomePage() {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [copyAllFeedback, setCopyAllFeedback] = useState<string | null>(null);
   const [copyAllWithPriceFeedback, setCopyAllWithPriceFeedback] = useState<string | null>(null);
+  const [copyPriceFeedback, setCopyPriceFeedback] = useState<string | null>(null);
+  const [copyDescWithPriceFeedback, setCopyDescWithPriceFeedback] = useState<string | null>(null);
   const [searchState, setSearchState] = useState<SearchState>({
     loading: false,
     error: null,
     data: null,
     parallel: null,
   });
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [mounted, setMounted] = useState(false);
   const [searchMode, setSearchMode] = useState<CptSearchMode>("general");
   const [orgConfig, setOrgConfig] = useState<SpecificOrgConfig | null>(null);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
   const [orgDialogReason, setOrgDialogReason] = useState<"required" | "change" | null>(null);
+  const [searchModeMenuOpen, setSearchModeMenuOpen] = useState(false);
 
   const savedHistoryListRef = useRef<HTMLUListElement>(null);
+  const searchModeDropdownRef = useRef<HTMLDivElement>(null);
   const [historyListFlushTop, setHistoryListFlushTop] = useState(false);
   const [historyListFlushBottom, setHistoryListFlushBottom] = useState(false);
 
@@ -376,6 +429,45 @@ export default function CptHomePage() {
       /* ignore */
     }
   }, [searchMode, mounted]);
+
+  useEffect(() => {
+    if (!searchModeMenuOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      const el = searchModeDropdownRef.current;
+      if (el && !el.contains(event.target as Node)) {
+        setSearchModeMenuOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSearchModeMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [searchModeMenuOpen]);
+
+  const chooseSearchMode = useCallback(
+    (next: CptSearchMode) => {
+      if (next === "general") {
+        setSearchMode("general");
+        setOrgDialogOpen(false);
+        setOrgDialogReason(null);
+        return;
+      }
+      if (orgConfig) {
+        setSearchMode("specificOrg");
+        return;
+      }
+      setOrgDialogReason("required");
+      setOrgDialogOpen(true);
+    },
+    [orgConfig],
+  );
 
   useEffect(() => {
     if (!mounted) return;
@@ -434,8 +526,28 @@ export default function CptHomePage() {
   const hasAnySummary = results.some((r) => Boolean(r.summary));
   const allSummariesLoaded =
     showOrgExtras && !scrapePending && hasAnySummary;
-  const allPricesLoaded =
-    showOrgExtras && !scrapePending && !avgPending && hasAnySummary;
+  const hasAnyNumericAvgAllowable = results.some(
+    (r) => resolvedAvgAllowableForResult(r) !== null,
+  );
+  const orgAvgReady = showOrgExtras && !avgPending;
+  const showCopyAllWithPriceButton =
+    results.length > 1 &&
+    showOrgExtras &&
+    !scrapePending &&
+    orgAvgReady &&
+    hasAnyNumericAvgAllowable;
+  const selectedNumericAvg =
+    selectedResult !== null ? resolvedAvgAllowableForResult(selectedResult) : null;
+  /** Header row: avg pill and/or copy control when org avg is ready and numeric avg exists without a pill. */
+  const showPriceCopyWithoutBadge =
+    !showAvgAllowableBadge &&
+    showOrgExtras &&
+    orgAvgReady &&
+    selectedNumericAvg !== null;
+  const canCopySelectedDescWithPrice =
+    selectedResult !== null &&
+    ((typeof selectedResult.summary === "string" && selectedResult.summary.length > 0) ||
+      resolvedAvgAllowableForResult(selectedResult) !== null);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -652,16 +764,44 @@ export default function CptHomePage() {
     });
   }
 
+  function copySelectedPriceLine() {
+    if (!selectedResult || selectedNumericAvg === null) return;
+    const text = `${selectedResult.code} - Avg allowable: ${avgAllowableFormatter.format(selectedNumericAvg)}`;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyPriceFeedback("Copied!");
+      setTimeout(() => setCopyPriceFeedback(null), 2000);
+    });
+  }
+
+  function copySelectedDescriptionWithPrice() {
+    if (!selectedResult || !canCopySelectedDescWithPrice) return;
+    const summary =
+      typeof selectedResult.summary === "string" && selectedResult.summary.length > 0
+        ? selectedResult.summary
+        : null;
+    const avgAllowable = resolvedAvgAllowableForResult(selectedResult);
+    if (!summary && avgAllowable == null) return;
+
+    const lines = [
+      `${selectedResult.code}${
+        avgAllowable == null ? "" : ` - Avg allowable: ${avgAllowableFormatter.format(avgAllowable)}`
+      }`,
+    ];
+    if (summary) {
+      lines.push(summary);
+    }
+    navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      setCopyDescWithPriceFeedback("Copied!");
+      setTimeout(() => setCopyDescWithPriceFeedback(null), 2000);
+    });
+  }
+
   function copyAllDescriptionsWithPrices() {
     const entries = results
       .map((result) => {
         const summary =
           typeof result.summary === "string" && result.summary.length > 0 ? result.summary : null;
-        const avgAllowable =
-          result.avgAllowable ??
-          result.srt?.cptCodes.find((entry) => entry.code.toUpperCase() === result.code.toUpperCase())
-            ?.avgAllowable ??
-          null;
+        const avgAllowable = resolvedAvgAllowableForResult(result);
 
         if (!summary && avgAllowable == null) return null;
 
@@ -742,46 +882,81 @@ export default function CptHomePage() {
         </div>
         {mounted ? (
           <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "center" }}>
-              <label className="cpt-search-mode-label" style={{ display: "flex", alignItems: "center", gap: "8px", margin: 0 }}>
-                <select
-                  id="cpt-search-mode"
-                  className="cpt-search-mode-select"
-                  value={searchMode}
-                  onChange={(e) => {
-                    const v = e.target.value as CptSearchMode;
-                    if (v === "general") {
-                      setSearchMode("general");
-                      setOrgDialogOpen(false);
-                      setOrgDialogReason(null);
-                      return;
-                    }
-                    if (orgConfig) {
-                      setSearchMode("specificOrg");
-                      return;
-                    }
-                    setOrgDialogReason("required");
-                    setOrgDialogOpen(true);
-                  }}
-                  aria-label="Search mode"
-                >
-                  <option value="general">General</option>
-                  <option value="specificOrg">Specific Org</option>
-                </select>
-              </label>
-
-              {searchMode === "specificOrg" ? (
+            <label className="cpt-search-mode-label cpt-search-mode-label--row">
+              <div className="cpt-search-mode-dropdown" ref={searchModeDropdownRef}>
                 <button
                   type="button"
-                  className="secondary-button cpt-contextid-button"
+                  id="cpt-search-mode"
+                  className="cpt-search-mode-select"
+                  aria-haspopup="listbox"
+                  aria-expanded={searchModeMenuOpen}
+                  aria-label="Search mode"
+                  onClick={() => setSearchModeMenuOpen((open) => !open)}
+                >
+                  <span className="cpt-search-mode-select__value">
+                    {searchMode === "general"
+                      ? "General"
+                      : orgConfig
+                        ? `Context ID: ${orgConfig.contextId}`
+                        : "Specific Org"}
+                  </span>
+                </button>
+                {searchModeMenuOpen ? (
+                  <ul
+                    className="cpt-search-mode-dropdown__menu"
+                    role="listbox"
+                    aria-labelledby="cpt-search-mode"
+                  >
+                    <li
+                      role="option"
+                      aria-selected={searchMode === "general"}
+                      className="cpt-search-mode-dropdown__option"
+                      onClick={() => {
+                        chooseSearchMode("general");
+                        setSearchModeMenuOpen(false);
+                      }}
+                    >
+                      General
+                    </li>
+                    <li
+                      role="option"
+                      aria-selected={searchMode === "specificOrg"}
+                      className="cpt-search-mode-dropdown__option"
+                      onClick={() => {
+                        chooseSearchMode("specificOrg");
+                        setSearchModeMenuOpen(false);
+                      }}
+                    >
+                      Specific Org
+                    </li>
+                  </ul>
+                ) : null}
+              </div>
+              {searchMode === "specificOrg" && orgConfig ? (
+                <button
+                  type="button"
+                  className="cpt-search-mode-org-edit"
                   onClick={openOrgDialogChange}
                   aria-label="Change org context"
-                  style={{ padding: "0.2rem 0.7rem", lineHeight: 1 }}
                 >
-                  Context ID: {orgConfig ? `${orgConfig.contextId}` : "[]"}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    width={16}
+                    height={16}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                  </svg>
                 </button>
               ) : null}
-            </div>
+            </label>
             <button
               type="button"
               className="secondary-button cpt-theme-toggle"
@@ -982,7 +1157,7 @@ export default function CptHomePage() {
                       className="details-header"
                       style={{
                         display: "flex",
-                        alignItems: "baseline",
+                        alignItems: "center",
                         justifyContent: "space-between",
                         gap: "16px",
                         flexWrap: "wrap",
@@ -993,26 +1168,50 @@ export default function CptHomePage() {
                           {selectedResult.code}
                         </h2>
                       </div>
-                      {showAvgAllowableBadge ? (
-                        <div
-                          style={{
-                            padding: "8px 12px",
-                            borderRadius: "999px",
-                            background:
-                              theme === "dark"
-                                ? "rgba(255, 255, 255, 0.08)"
-                                : "rgba(15, 23, 42, 0.05)",
-                            border:
-                              theme === "dark"
-                                ? "1px solid rgba(255, 255, 255, 0.12)"
-                                : "1px solid rgba(15, 23, 42, 0.08)",
-                            color: theme === "dark" ? "rgba(255, 255, 255, 0.86)" : "#334155",
-                            fontSize: "0.9rem",
-                            fontWeight: "600",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {formatAvgAllowable(selectedAvgAllowable, avgPending)}
+                      {showAvgAllowableBadge || showPriceCopyWithoutBadge ? (
+                        <div className="cpt-header-meta">
+                          {showAvgAllowableBadge &&
+                          !(orgAvgReady && selectedNumericAvg !== null) ? (
+                            <div className="cpt-avg-allowable-badge">
+                              <span className="cpt-avg-allowable-badge__label">
+                                {formatAvgAllowable(selectedAvgAllowable, avgPending)}
+                              </span>
+                            </div>
+                          ) : null}
+                          {(showAvgAllowableBadge && orgAvgReady && selectedNumericAvg !== null) ||
+                          showPriceCopyWithoutBadge ? (
+                            <button
+                              type="button"
+                              className={[
+                                "cpt-avg-allowable-badge",
+                                "cpt-avg-allowable-badge--interactive",
+                                showPriceCopyWithoutBadge ? "cpt-avg-allowable-badge--icon-only" : "",
+                                copyPriceFeedback === "Copied!" ? "cpt-avg-allowable-badge--copied" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              onClick={copySelectedPriceLine}
+                              title="Copy avg allowable"
+                              aria-label={
+                                copyPriceFeedback === "Copied!"
+                                  ? "Copied avg allowable"
+                                  : "Copy avg allowable"
+                              }
+                            >
+                              <span className="cpt-avg-allowable-badge__glyph" aria-hidden>
+                                {copyPriceFeedback === "Copied!" ? (
+                                  <CptCheckGlyph />
+                                ) : (
+                                  <CptCopyGlyph />
+                                )}
+                              </span>
+                              {showAvgAllowableBadge ? (
+                                <span className="cpt-avg-allowable-badge__label">
+                                  {formatAvgAllowable(selectedAvgAllowable, avgPending)}
+                                </span>
+                              ) : null}
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -1024,7 +1223,24 @@ export default function CptHomePage() {
                     {scrapePending ? (
                       <p className="placeholder-text">Fetching description from sources…</p>
                     ) : selectedResult.summary ? (
-                      <p className="summary-box">{selectedResult.summary}</p>
+                      <div className="cpt-description-block">
+                        <p className="summary-box">{selectedResult.summary}</p>
+                        <button
+                          type="button"
+                          className={
+                            copyFeedback === "Copied!"
+                              ? "cpt-copy-fab cpt-copy-fab--done"
+                              : "cpt-copy-fab"
+                          }
+                          onClick={() => copyToClipboard(selectedResult.summary!)}
+                          title="Copy description"
+                          aria-label={
+                            copyFeedback === "Copied!" ? "Copied description" : "Copy description"
+                          }
+                        >
+                          {copyFeedback === "Copied!" ? <CptCheckGlyph /> : <CptCopyGlyph />}
+                        </button>
+                      </div>
                     ) : (
                       <p className="placeholder-text">
                         No usable summary was found for this code from the evaluated sources.
@@ -1054,25 +1270,28 @@ export default function CptHomePage() {
                       </div>
                       {showOrgExtras ? (
                         <div className="button-group">
-                          {selectedResult.summary ? (
+                          {showAvgAllowableBadge ? (
                             <button
                               type="button"
                               className="secondary-button copy-button"
-                              onClick={() => copyToClipboard(selectedResult.summary!)}
+                              disabled={!canCopySelectedDescWithPrice}
+                              onClick={copySelectedDescriptionWithPrice}
                             >
-                              {copyFeedback === "Copied!" ? "✓ Copied" : "Copy Description"}
+                              {copyDescWithPriceFeedback === "Copied!"
+                                ? "✓ Copied"
+                                : "Copy Description with Price"}
                             </button>
                           ) : null}
-                          {allSummariesLoaded ? (
+                          {results.length > 1 && allSummariesLoaded ? (
                             <button
                               type="button"
                               className="secondary-button copy-button"
                               onClick={copyAllDescriptions}
                             >
-                              {copyAllFeedback === "Copied!" ? "✓ Copied" : "Copy all"}
+                              {copyAllFeedback === "Copied!" ? "✓ Copied" : "Copy All Descriptions"}
                             </button>
                           ) : null}
-                          {allPricesLoaded ? (
+                          {showCopyAllWithPriceButton ? (
                             <button
                               type="button"
                               className="secondary-button copy-button"
@@ -1080,7 +1299,7 @@ export default function CptHomePage() {
                             >
                               {copyAllWithPriceFeedback === "Copied!"
                                 ? "✓ Copied"
-                                : "Copy all with price"}
+                                : "Copy All With Price"}
                             </button>
                           ) : null}
                         </div>
