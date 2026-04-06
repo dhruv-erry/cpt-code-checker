@@ -1,8 +1,9 @@
 "use server";
 
 import Anthropic from "@anthropic-ai/sdk";
-import puppeteer from "puppeteer";
+import type { Browser } from "puppeteer-core";
 import type { SpecificOrgConfig } from "../../lib/cptOrgConfig";
+import { launchPuppeteerBrowser } from "../../lib/puppeteerLaunch";
 import { isValidContextId } from "../../lib/cptOrgConfig";
 import { isPlausibleCptCode, normalizeCodes } from "../../lib/cptSearchCodes";
 import { mergeCptSearchParts } from "../../lib/cptSearchMerge";
@@ -456,7 +457,7 @@ async function evaluateWithAnthropic(args: {
 }
 
 async function scrapeSingleCode(
-  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
+  browser: Browser,
   code: string,
   maxUrlsPerCode: number,
   navTimeoutMs: number,
@@ -552,9 +553,9 @@ export async function cptSearchScrape(rawCodes: string[]): Promise<CptScrapeSlic
   const NAV_TIMEOUT_MS = 15_000;
   const MAX_TEXT_CHARS = 20_000;
 
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  let browser: Browser | null = null;
   try {
-    browser = await puppeteer.launch();
+    browser = await launchPuppeteerBrowser();
     const slices: CptScrapeSlice[] = [];
     for (const code of codes) {
       slices.push(
@@ -587,10 +588,10 @@ export async function cptSearch(
   const NAV_TIMEOUT_MS = 15_000;
   const MAX_TEXT_CHARS = 20_000;
 
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  let browser: Browser | null = null;
 
   try {
-    browser = await puppeteer.launch();
+    browser = await launchPuppeteerBrowser();
     const placeholders = codes.map(() => "?").join(", ");
     const avgOrg = org !== undefined && isUsableOrgForAvg(org) ? org : null;
 
